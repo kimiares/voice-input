@@ -44,3 +44,8 @@ Packaging and transferring:
 
 Release notes & detailed installation guide:
 https://github.com/kimiares/voice-input/releases/tag/v1.1
+
+Краткое руководство на русском:
+Этот проект предоставляет демон голосового ввода (PTT) для Linux-терминалов. Зажмите Right Alt, говорите, отпустите — распознанный текст будет вставлен в активную консоль. Скажите одно из кодовых слов (например, "enter", "run") чтобы отправить Enter.
+
+Инструкция по установке и упаковке — см. релизные заметки и README выше.
