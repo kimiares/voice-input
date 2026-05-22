@@ -41,3 +41,6 @@ Troubleshooting:
 Packaging and transferring:
 - Use `./pack.sh` to create a tar.gz archive (it will include the agent file if present and exclude `.venv/`)
 - On target machine: extract, run `./install.sh --no-service --download-models` and then `./run.sh start`
+
+Release notes & detailed installation guide:
+https://github.com/kimiares/voice-input/releases/tag/v1.1
