@@ -14,6 +14,9 @@ import os
 import sys
 import tempfile
 import time
+import threading
+import subprocess
+import shutil
 
 from pynput import keyboard
 
@@ -24,12 +27,58 @@ from injector import inject, get_active_window_id
 
 
 # ---------------------------------------------------------------------------
+# Copilot window monitor
+# ---------------------------------------------------------------------------
+def _can_monitor_windows() -> bool:
+    return bool(shutil.which("wmctrl") or shutil.which("xdotool"))
+
+
+def _copilot_window_exists() -> bool:
+    """Return True if a window with 'copilot' in its title exists.
+    Falls back between wmctrl and xdotool. If neither available, returns True
+    to avoid accidentally exiting the daemon.
+    """
+    try:
+        if shutil.which("wmctrl"):
+            r = subprocess.run(["wmctrl", "-l"], capture_output=True, text=True)
+            return "copilot" in r.stdout.lower()
+        if shutil.which("xdotool"):
+            r = subprocess.run(["xdotool", "search", "--name", "copilot"], capture_output=True, text=True)
+            return bool(r.stdout.strip())
+    except Exception as e:
+        print(f"[voice-input] window check failed: {e}", flush=True)
+    # If cannot determine, assume it's present
+    return True
+
+
+def _monitor_copilot_and_exit(poll_interval: float = 2.0) -> None:
+    if not _can_monitor_windows():
+        print("[voice-input] wmctrl/xdotool not found — skipping Copilot window monitor", flush=True)
+        return
+    while True:
+        try:
+            if not _copilot_window_exists():
+                print("[voice-input] Copilot window not found — exiting.", flush=True)
+                # Immediate process exit
+                os._exit(0)
+        except Exception as e:
+            print(f"[voice-input] monitor error: {e}", flush=True)
+        time.sleep(poll_interval)
+
+
+# ---------------------------------------------------------------------------
 # State
 # ---------------------------------------------------------------------------
 
 recorder = Recorder()
 _ptt_active = False
 _target_window: str | None = None  # window ID captured at PTT press
+
+# Muted flag file path (created by run.sh mute/unmute)
+MUTED_FILE = os.path.join(os.path.dirname(__file__), ".muted")
+
+def is_muted() -> bool:
+    return os.path.exists(MUTED_FILE)
 
 
 # ---------------------------------------------------------------------------
@@ -39,6 +88,9 @@ _target_window: str | None = None  # window ID captured at PTT press
 def on_press(key) -> None:
     global _ptt_active, _target_window
     if key == PTT_KEY and not _ptt_active:
+        if is_muted():
+            print("\r🔇 Muted — ignoring PTT", flush=True)
+            return
         _ptt_active = True
         _target_window = get_active_window_id()  # remember focused window
         _on_ptt_start()
@@ -98,8 +150,14 @@ def _on_ptt_stop() -> None:
 
 def main() -> None:
     print(f"🎤 voice-input started. Hold [{_key_name(PTT_KEY)}] to speak.")
+    if is_muted():
+        print("   🔇 Currently muted — PTT is disabled.")
     print(f"   Code words for Enter: see config.py → ENTER_TRIGGER_WORDS")
     print(f"   Ctrl+C to quit.\n")
+
+    # Start background monitor that exits when Copilot window closes
+    monitor_thread = threading.Thread(target=_monitor_copilot_and_exit, daemon=True)
+    monitor_thread.start()
 
     with keyboard.Listener(on_press=on_press, on_release=on_release) as listener:
         try:
