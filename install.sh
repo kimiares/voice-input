@@ -7,6 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON="${PYTHON:-python3}"
 INSTALL_SERVICE=true
 USE_VOSK=false
+DOWNLOAD_MODELS=false
 VENV_DIR="$SCRIPT_DIR/.venv"
 
 # --- Parse args ---
@@ -14,10 +15,12 @@ for arg in "$@"; do
   case "$arg" in
     --no-service) INSTALL_SERVICE=false ;;
     --vosk)       USE_VOSK=true ;;
+    --download-models) DOWNLOAD_MODELS=true ;;
     --help|-h)
-      echo "Usage: $0 [--no-service] [--vosk]"
-      echo "  --no-service   Skip systemd user service installation"
-      echo "  --vosk         Install Vosk instead of Whisper (lighter, faster)"
+      echo "Usage: $0 [--no-service] [--vosk] [--download-models]"
+      echo "  --no-service       Skip systemd user service installation"
+      echo "  --vosk             Install Vosk instead of Whisper (lighter, faster)"
+      echo "  --download-models  Attempt to download STT models after installing Python packages"
       exit 0 ;;
   esac
 done
@@ -79,9 +82,52 @@ if [[ "$USE_VOSK" == "true" ]]; then
   warn "Download model from: https://alphacephei.com/vosk/models  (e.g. vosk-model-ru-0.42)"
   "$VENV_PIP" install sounddevice pynput numpy vosk
 else
-  "$VENV_PIP" install sounddevice pynput numpy pywhispercpp
+  # Install faster-whisper to enable faster on-CPU inference and model download helper
+  "$VENV_PIP" install sounddevice pynput numpy pywhispercpp faster-whisper || "$VENV_PIP" install sounddevice pynput numpy pywhispercpp
 fi
 ok "Python packages installed."
+
+# Optional: download models into cache (faster-whisper will populate HF cache)
+if [[ "$DOWNLOAD_MODELS" == "true" ]]; then
+  echo ""
+  echo "[3.5] Downloading STT models..."
+  if [[ "$USE_VOSK" == "true" ]]; then
+    # Download and extract vosk-model-small-en-us-0.15 to ~/vosk-models/
+    VOSK_DIR="$HOME/vosk-models"
+    VOSK_MODEL_NAME="vosk-model-small-en-us-0.15"
+    VOSK_URL="https://alphacephei.com/vosk/models/$VOSK_MODEL_NAME.zip"
+
+    mkdir -p "$VOSK_DIR"
+    echo "Downloading $VOSK_MODEL_NAME into $VOSK_DIR (may take a minute)..."
+    TMPZIP="$VOSK_DIR/$VOSK_MODEL_NAME.zip"
+    if command -v curl &>/dev/null; then
+      curl -L "$VOSK_URL" -o "$TMPZIP"
+    elif command -v wget &>/dev/null; then
+      wget -O "$TMPZIP" "$VOSK_URL"
+    else
+      warn "curl/wget not found — cannot download Vosk model automatically. Please download manually: $VOSK_URL"
+    fi
+
+    if [[ -f "$TMPZIP" ]]; then
+      echo "Unpacking..."
+      unzip -o "$TMPZIP" -d "$VOSK_DIR" >/dev/null || true
+      rm -f "$TMPZIP"
+      ok "Vosk model downloaded to $VOSK_DIR/$VOSK_MODEL_NAME"
+      echo "Add or update VOSK_MODEL_PATH in config.py to: $VOSK_DIR/$VOSK_MODEL_NAME"
+    else
+      warn "Vosk model zip not found, skipped."
+    fi
+  else
+    echo "Downloading faster-whisper model 'small.en' into HuggingFace cache (may take several minutes)..."
+    "$VENV_PYTHON" - <<PY
+from faster_whisper import WhisperModel
+print('Instantiating faster-whisper model small.en (will download to cache)')
+WhisperModel('small.en', device='cpu', compute_type='int8')
+print('Model download (or cache check) finished')
+PY
+    ok "Model download step finished."
+  fi
+fi
 
 # --- Launcher script ---
 echo ""
